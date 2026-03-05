@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Stavros Klimaat Geschiedenis</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    font-family: Arial;
+    margin: 40px;
+    background: #f2f4f7;
+}
+
+h1 {
+    margin-bottom: 20px;
+}
+
+button {
+    padding: 10px 15px;
+    margin-right: 10px;
+    margin-bottom: 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    background-color: #1976d2;
+    color: white;
+}
+
+button:hover {
+    background-color: #125ea8;
+}
+
+canvas {
+    background: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 40px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background: white;
+}
+
+th, td {
+    border: 1px solid #ccc;
+    padding: 6px;
+    text-align: center;
+}
+
+th {
+    background: #e6e6e6;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Stavros Klimaat Geschiedenis</h1>
+
+<div>
+    <button onclick="loadData(1)">Laatste 24 uur</button>
+    <button onclick="loadData(7)">Laatste week</button>
+    <button onclick="loadData(30)">Laatste maand</button>
+    <button onclick="exportCSV()">CSV Export</button>
+</div>
+
+<h2>Temperatuur (°C)</h2>
+<canvas id="tempChart"></canvas>
+
+<h2>Luchtvochtigheid (%)</h2>
+<canvas id="humChart"></canvas>
+
+<h2>Data</h2>
+<table id="dataTable">
+<thead>
+<tr>
+<th>Tijd</th>
+<th>Temperatuur (°C)</th>
+<th>Vochtigheid (%)</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+
+const channelID = 3285271;
+const readAPIKey = "SZBNZBMMVQO88BIT";
+
+let tempChart;
+let humChart;
+let currentData = [];
+
+async function loadData(days) {
+
+    const results = days * 24 * 30; // ongeveer 30 metingen per uur (2 min interval)
+    const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=${results}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    const labels = [];
+    const tempData = [];
+    const humData = [];
+
+    const tableBody = document.querySelector("#dataTable tbody");
+    tableBody.innerHTML = "";
+
+    currentData = [];
+
+    data.feeds.forEach(feed => {
+
+        if (feed.field1 && feed.field2) {
+
+            const date = new Date(feed.created_at);
+            const timeString = date.toLocaleString();
+
+            labels.push(timeString);
+            tempData.push(parseFloat(feed.field1));
+            humData.push(parseFloat(feed.field2));
+
+            currentData.push({
+                time: timeString,
+                temp: feed.field1,
+                hum: feed.field2
+            });
+
+            tableBody.innerHTML += `
+                <tr>
+                    <td>${timeString}</td>
+                    <td>${feed.field1}</td>
+                    <td>${feed.field2}</td>
+                </tr>
+            `;
+        }
+    });
+
+    createChart("tempChart", labels, tempData, "Temperatuur °C", "red", tempChart, chart => tempChart = chart);
+    createChart("humChart", labels, humData, "Vochtigheid %", "blue", humChart, chart => humChart = chart);
+}
+
+function createChart(canvasId, labels, data, label, color, existingChart, setChart) {
+
+    if (existingChart) existingChart.destroy();
+
+    const chart = new Chart(document.getElementById(canvasId), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: label,
+                data: data,
+                borderColor: color,
+                fill: false,
+                tension: 0.2
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                x: { display: false }
+            }
+        }
+    });
+
+    setChart(chart);
+}
+
+function exportCSV() {
+
+    let csv = "Tijd,Temperatuur (C),Vochtigheid (%)\n";
+
+    currentData.forEach(row => {
+        csv += `${row.time},${row.temp},${row.hum}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.setAttribute('download', 'stavros_klimaat.csv');
+    a.click();
+}
+
+// standaard laatste week laden bij openen
+loadData(7);
+
+</script>
+
+</body>
+</html>
