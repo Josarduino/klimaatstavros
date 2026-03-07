@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThingSpeak Temperatuur & Vochtigheid</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.2.0"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .chart-container { width: 100%; height: 400px; margin-bottom: 20px; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        #lastUpdate { font-weight: bold; margin-bottom: 20px; font-size: 1.2em; }
+        .active { background-color: #4CAF50; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Temperatuur & Vochtigheid</h1>
+        <div id="lastUpdate">Laatste meting: --:-- (--/--/----) | Temp: --°C | Vocht: --% | Min: --°C | Max: --°C</div>
+        <button id="allBtn">Alle data (gemiddeld per kwartier)</button>
+        <button id="24hBtn">Laatste 24 uur (alle punten)</button>
+        <div class="chart-container">
+            <canvas id="tempChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <canvas id="humidityChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const readKey = 'SZBNZBMMVQO88BIT';
+        const channelId = '3285271';
+        let tempChart, humidityChart;
+        let allData = [];
+
+        // Kleurbereiken voor temperatuur
+        function getTempColor(ctx) {
+            const value = ctx.dataset.data[ctx.dataIndex];
+            if (value < 15) return 'darkblue';
+            if (value < 20) return 'lightblue';
+            if (value < 28) return 'orange';
+            return 'red';
+        }
+
+        // Initialiseer grafieken
+        function initCharts() {
+            const tempCtx = document.getElementById('tempChart').getContext('2d');
+            const humidityCtx = document.getElementById('humidityChart').getContext('2d');
+
+            tempChart = new Chart(tempCtx, {
+                type: 'line',
+                data: { datasets: [{
+                    label: 'Temperatuur (°C)',
+                    borderColor: 'blue',
+                    backgroundColor: function(ctx) {
+                        const value = ctx.dataset.data[ctx.dataIndex];
+                        if (value < 15) return 'darkblue';
+                        if (value < 20) return 'lightblue';
+                        if (value < 28) return 'orange';
+                        return 'red';
+                    },
+                    borderWidth: 1,
+                    tension: 0.1,
+                    pointRadius: 3
+                }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'hour' }, title: { display: true, text: 'Tijd' } },
+                        y: { title: { display: true, text: 'Temperatuur (°C)' } }
+                    },
+                    plugins: { legend: { position: 'top' } }
+                }
+            });
+
+            humidityChart = new Chart(humidityCtx, {
+                type: 'line',
+                data: { datasets: [{
+                    label: 'Vochtigheid (%)',
+                    borderColor: 'darkblue',
+                    borderWidth: 1,
+                    tension: 0.1,
+                    pointRadius: 3
+                }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'hour' }, title: { display: true, text: 'Tijd' } },
+                        y: { title: { display: true, text: 'Vochtigheid (%)' } }
+                    },
+                    plugins: { legend: { position: 'top' } }
+                }
+            });
+        }
+
+        // Haal data op van ThingSpeak
+        async function fetchData(timeRange = 'all') {
+            let url;
+            if (timeRange === '24h') {
+                const end = new Date();
+                const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+                url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?api_key=${readKey}&start=${start.toISOString()}&end=${end.toISOString()}`;
+            } else {
+                url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?api_key=${readKey}&results=8000`;
+            }
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                allData = data.feeds;
+                updateCharts(timeRange);
+                updateLastUpdate();
+            } catch (error) {
+                console.error('Fout bij ophalen data:', error);
+                document.getElementById('lastUpdate').textContent =
+                    'Fout bij ophalen data. Probeer het later opnieuw.';
+            }
+        }
+
+        // Update grafieken met nieuwe data
+        function updateCharts(timeRange) {
+            let processedData = [...allData].reverse();
+
+            if (timeRange === 'all') {
+                // Groepeer per kwartier
+                const grouped = {};
+                processedData.forEach(entry => {
+                    if (!entry.created_at) return;
+                    const date = new Date(entry.created_at);
+                    const quarter = Math.floor(date.getMinutes() / 15) * 15;
+                    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()} ${date.getHours()}:${quarter}`;
+                    if (!grouped[key]) grouped[key] = { temp: [], humidity: [], time: new Date(key) };
+                    if (entry.field1) grouped[key].temp.push(parseFloat(entry.field1));
+                    if (entry.field2) grouped[key].humidity.push(parseFloat(entry.field2));
+                });
+                processedData = Object.values(grouped).map(group => ({
+                    time: group.time,
+                    temp: group.temp.length ? group.temp.reduce((a, b) => a + b, 0) / group.temp.length : null,
+                    humidity: group.humidity.length ? group.humidity.reduce((a, b) => a + b, 0) / group.humidity.length : null
+                })).filter(entry => entry.temp !== null && entry.humidity !== null);
+            } else {
+                processedData = processedData.map(entry => ({
+                    time: new Date(entry.created_at),
+                    temp: entry.field1 ? parseFloat(entry.field1) : null,
+                    humidity: entry.field2 ? parseFloat(entry.field2) : null
+                })).filter(entry => entry.temp !== null && entry.humidity !== null);
+            }
+
+            tempChart.data.labels = processedData.map(d => d.time);
+            tempChart.data.datasets[0].data = processedData.map(d => d.temp);
+            tempChart.update();
+
+            humidityChart.data.labels = processedData.map(d => d.time);
+            humidityChart.data.datasets[0].data = processedData.map(d => d.humidity);
+            humidityChart.update();
+        }
+
+        // Update laatste meting tijd, temp, vocht, min en max sinds middernacht
+        function updateLastUpdate() {
+            if (allData.length > 0) {
+                const lastEntry = allData[allData.length - 1];
+                if (lastEntry.created_at) {
+                    const lastTime = new Date(lastEntry.created_at);
+                    const temp = lastEntry.field1 ? parseFloat(lastEntry.field1).toFixed(1) : '--';
+                    const humidity = lastEntry.field2 ? parseFloat(lastEntry.field2).toFixed(1) : '--';
+
+                    // Bereken min en max sinds middernacht
+                    const midnight = new Date(lastTime);
+                    midnight.setHours(0, 0, 0, 0);
+                    const todayData = allData.filter(entry => {
+                        const entryTime = new Date(entry.created_at);
+                        return entryTime >= midnight && entry.field1;
+                    });
+                    const tempsToday = todayData.map(entry => parseFloat(entry.field1));
+                    const minTemp = tempsToday.length ? Math.min(...tempsToday).toFixed(1) : '--';
+                    const maxTemp = tempsToday.length ? Math.max(...tempsToday).toFixed(1) : '--';
+
+                    document.getElementById('lastUpdate').textContent =
+                        `Laatste meting: ${lastTime.getHours().toString().padStart(2, '0')}:${lastTime.getMinutes().toString().padStart(2, '0')} (${lastTime.getDate().toString().padStart(2, '0')}-${(lastTime.getMonth()+1).toString().padStart(2, '0')}-${lastTime.getFullYear()}) | Temp: ${temp}°C | Vocht: ${humidity}% | Min: ${minTemp}°C | Max: ${maxTemp}°C`;
+                }
+            }
+        }
+
+        // Event listeners voor knoppen
+        document.getElementById('allBtn').addEventListener('click', () => {
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            document.getElementById('allBtn').classList.add('active');
+            fetchData('all');
+        });
+        document.getElementById('24hBtn').addEventListener('click', () => {
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            document.getElementById('24hBtn').classList.add('active');
+            fetchData('24h');
+        });
+
+        // Auto-refresh elke 2 minuten
+        setInterval(() => {
+            const currentRange = document.querySelector('button.active')?.id === '24hBtn' ? '24h' : 'all';
+            fetchData(currentRange);
+        }, 120000);
+
+        // Start met "Alle data"
+        initCharts();
+        document.getElementById('allBtn').classList.add('active');
+        fetchData('all');
+    </script>
+</body>
+</html>
