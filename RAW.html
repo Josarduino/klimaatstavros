@@ -19,7 +19,7 @@
 <body>
     <div class="container">
         <h1>Temperatuur & Vochtigheid</h1>
-        <div id="lastUpdate">Laatste meting: --:-- (--/--/----) | Temp: --°C | Vocht: --% | Min: --°C | Max: --°C</div>
+        <div id="lastUpdate">Laatste meting: --:-- (--/--/----) | Temp: --°C | Gvoel: --°C | Vocht: --% | Min: --°C | Max: --°C</div>
         <button id="allBtn">Alle data (gemiddeld per kwartier)</button>
         <button id="24hBtn">Laatste 24 uur (alle punten)</button>
         <div class="chart-container">
@@ -45,6 +45,18 @@
             return 'red';
         }
 
+        // Bereken gevoelstemperatuur (vereenvoudigd voor matige omstandigheden)
+        function calculateFeelsLike(temp, humidity) {
+            if (temp < 10 || humidity < 20) return temp;
+            const tF = (temp * 9/5) + 32;
+            const hiF = -42.379 + 2.04901523*tF + 10.14333127*humidity
+                        - 0.22475541*tF*humidity - 6.83783e-3*tF*tF
+                        - 5.481717e-2*humidity*humidity + 1.22874e-3*tF*tF*humidity
+                        + 8.5282e-4*tF*humidity*humidity - 1.99e-6*tF*tF*humidity*humidity;
+            const hiC = (hiF - 32) * 5/9;
+            return hiC;
+        }
+
         // Initialiseer grafieken
         function initCharts() {
             const tempCtx = document.getElementById('tempChart').getContext('2d');
@@ -52,20 +64,22 @@
 
             tempChart = new Chart(tempCtx, {
                 type: 'line',
-                data: { datasets: [{
-                    label: 'Temperatuur (°C)',
-                 //   borderColor: 'blue',
-                    backgroundColor: function(ctx) {
-                        const value = ctx.dataset.data[ctx.dataIndex];
-                        if (value < 15) return 'darkblue';
-                        if (value < 20) return 'lightblue';
-                        if (value < 28) return 'orange';
-                        return 'red';
-                    },
-                    borderWidth: 1,
-                    tension: 0.1,
-                    pointRadius: 3
-                }] },
+                data: {
+                    datasets: [{
+                        label: 'Temperatuur (°C)',
+                        borderColor: 'blue',
+                        backgroundColor: function(ctx) {
+                            const value = ctx.dataset.data[ctx.dataIndex];
+                            if (value < 15) return 'darkblue';
+                            if (value < 20) return 'lightblue';
+                            if (value < 28) return 'orange';
+                            return 'red';
+                        },
+                        borderWidth: 1,
+                        tension: 0.1,
+                        pointRadius: 3
+                    }]
+                },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
@@ -79,13 +93,15 @@
 
             humidityChart = new Chart(humidityCtx, {
                 type: 'line',
-                data: { datasets: [{
-                    label: 'Vochtigheid (%)',
-                    borderColor: 'darkblue',
-                    borderWidth: 1,
-                    tension: 0.1,
-                    pointRadius: 3
-                }] },
+                data: {
+                    datasets: [{
+                        label: 'Vochtigheid (%)',
+                        borderColor: 'darkblue',
+                        borderWidth: 1,
+                        tension: 0.1,
+                        pointRadius: 3
+                    }]
+                },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
@@ -126,7 +142,6 @@
             let processedData = [...allData].reverse();
 
             if (timeRange === 'all') {
-                // Groepeer per kwartier
                 const grouped = {};
                 processedData.forEach(entry => {
                     if (!entry.created_at) return;
@@ -159,7 +174,7 @@
             humidityChart.update();
         }
 
-        // Update laatste meting tijd, temp, vocht, min en max sinds middernacht
+        // Update laatste meting tijd, temp, vocht, min/max en gevoelstemperatuur
         function updateLastUpdate() {
             if (allData.length > 0) {
                 const lastEntry = allData[allData.length - 1];
@@ -167,6 +182,11 @@
                     const lastTime = new Date(lastEntry.created_at);
                     const temp = lastEntry.field1 ? parseFloat(lastEntry.field1).toFixed(1) : '--';
                     const humidity = lastEntry.field2 ? parseFloat(lastEntry.field2).toFixed(1) : '--';
+
+                    // Bereken gevoelstemperatuur
+                    const feelsLike = (temp !== '--' && humidity !== '--')
+                        ? calculateFeelsLike(parseFloat(temp), parseFloat(humidity)).toFixed(1)
+                        : '--';
 
                     // Bereken min en max sinds middernacht
                     const midnight = new Date(lastTime);
@@ -180,7 +200,8 @@
                     const maxTemp = tempsToday.length ? Math.max(...tempsToday).toFixed(1) : '--';
 
                     document.getElementById('lastUpdate').textContent =
-                        `Laatste meting: ${lastTime.getHours().toString().padStart(2, '0')}:${lastTime.getMinutes().toString().padStart(2, '0')} (${lastTime.getDate().toString().padStart(2, '0')}-${(lastTime.getMonth()+1).toString().padStart(2, '0')}-${lastTime.getFullYear()}) | Timp: ${temp}°C | Vocht: ${humidity}% | Min: ${minTemp}°C | Max: ${maxTemp}°C`;
+                        `Laatste meting: ${lastTime.getHours().toString().padStart(2, '0')}:${lastTime.getMinutes().toString().padStart(2, '0')} (${lastTime.getDate().toString().padStart(2, '0')}-${(lastTime.getMonth()+1).toString().padStart(2, '0')}-${lastTime.getFullYear()}) |
+                         Temp: ${temp}°C | Gvoel: ${feelsLike}°C | Vocht: ${humidity}% | Min: ${minTemp}°C | Max: ${maxTemp}°C`;
                 }
             }
         }
